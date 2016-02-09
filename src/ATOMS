@@ -88,6 +88,7 @@ A busy			"busy"
 A byte			"byte"
 A c_stack		"c_stack"
 A call			"call"
+A call_continuation	"call_continuation"
 A callable		"callable"
 A canceled		"canceled"
 A case_sensitive_file_names "case_sensitive_file_names"
@@ -125,10 +126,13 @@ A colon			":"
 A colon_eq		":="
 A comma			","
 A comments		"comments"
+A compare		"compare"
 A compound		"compound"
 A context		"context"
 A context_module	"context_module"
 A continue		"continue"
+A copy_term			"copy_term"
+A copy_term_nat		"copy_term_nat"
 A copysign		"copysign"
 A core			"core"
 A core_left		"core_left"
@@ -153,11 +157,13 @@ A cycles		"cycles"
 A cyclic_term		"cyclic_term"
 A dand			"$and"
 A date			"date"
+A datts			"$atts"
 A db_reference		"db_reference"
 A dc_call_prolog	"$c_call_prolog"
 A dcall			"<meta-call>"
 A dcall_cleanup		"$call_cleanup"
 A dcatch		"$catch"
+A dcont			"$cont$"
 A dcut			"$cut"
 A dde_error		"dde_error"
 A dde_handle		"dde_handle"
@@ -192,6 +198,8 @@ A div			"div"
 A divide		"/"
 A dload			"$load"
 A dmessage_queue	"$message_queue"
+A dmeta_call		"$meta_call"
+A dmeta			"$meta"
 A dmutex		"$mutex"
 A domain_error		"domain_error"
 A dos			"dos"
@@ -211,10 +219,10 @@ A dthread_init		"$thread_init"
 A dthrow		"$throw"
 A dtime			"$time"
 A dtoplevel		"$toplevel"
+A dundo_unify		"$undo_unify"
 A duplicate_key		"duplicate_key"
 A dvard			"$VAR$"
 A dvariable_names	"$variable_names"
-A dwakeup		"$wakeup"
 A dynamic		"dynamic"
 A e			"e"
 A encoding		"encoding"
@@ -491,8 +499,10 @@ A portray_goal		"portray_goal"
 A portrayed		"portrayed"
 A position		"position"
 A posix			"posix"
+A post_unify		"post_unify"
 A powm			"powm"
 A predicate_indicator	"predicate_indicator"
+A pre_unify		"pre_unify"
 A predicates		"predicates"
 A print			"print"
 A print_message		"print_message"
@@ -648,6 +658,8 @@ A system_init_file	"system_init_file"
 A system_thread_id	"system_thread_id"
 A system_time		"system_time"
 A tan			"tan"
+A dra_call		"dra_call"
+A dra_meta		"dra_meta"
 A tanh			"tanh"
 A temporary		"temporary"
 A temporary_files	"temporary_files"
@@ -790,6 +802,7 @@ F buffer		1
 F buffer_size		1
 F busy			2
 F call			1
+F call_continuation	1
 F catch			3
 F ceil			1
 F ceiling		1
@@ -816,6 +829,7 @@ F date			3
 F date			9
 F dc_call_prolog	0
 F dcall			1
+F dcont			3
 F dcut			1
 F dde_error		2
 F debug			1
@@ -831,6 +845,8 @@ F gdiv			2
 F getbit		2
 F divide		2
 F dmessage_queue	1
+F dmeta_call		1
+F dmeta			4
 F dmutex		1
 F domain_error		2
 F dot			2
@@ -838,11 +854,13 @@ F doublestar		2
 F dparse_quasi_quotations 2
 F dprof_node		1
 F dquasi_quotation	3
+F dra_call		1
 F drecover_and_rethrow	2
 F dstream		1
 F dthread_init		0
 F dthrow		1
 F dtime			2
+F dundo_unify		4
 F duplicate_key		1
 F dvard			1
 F e			0
@@ -934,8 +952,10 @@ F plus			1
 F plus			2
 F popcount		1
 F portray		1
+F post_unify		4
 F position		1
 F powm			3
+F pre_unify		4
 F print			1
 F print_message		2
 F priority		1
@@ -959,6 +979,7 @@ F repeat		1
 F reposition		1
 F representation_error	1
 F representation_errors 1
+F reset			3
 F resource_error	1
 F retry			1
 F round			1
@@ -1007,10 +1028,11 @@ F tty			1
 F type			1
 F type_error		2
 F undefinterc		4
+F unify			4
 F unify_determined	2
 F uninstantiation_error	1
 F var			1
-F wakeup		5
+F wakeup		3
 F warning		3
 F xor			2
 F xpceref		1

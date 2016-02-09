@@ -1699,7 +1699,7 @@ PL_meta_predicate(predicate_t proc, const char *spec_s)
   int arity = def->functor->arity;
   int i;
   int mask = 0;
-  int transparent = FALSE;
+  int transparent = LOGICMOO_TRANSPARENT;
   const unsigned char *s = (const unsigned char*)spec_s;
 
   for(i=0; i<arity; i++, s++)
@@ -1741,7 +1741,7 @@ PL_meta_predicate(predicate_t proc, const char *spec_s)
     }
 
     mask |= spec<<(i*4);
-    if ( spec < 10 || spec == MA_META || spec == MA_HAT || spec == MA_DCG )
+    if ( spec < 10 || (spec == MA_META && !LOGICMOO_TRANSPARENT) || spec == MA_HAT || spec == MA_DCG )
       transparent = TRUE;
   }
 
@@ -2612,8 +2612,15 @@ static const patt_mask patt_masks[] =
   { ATOM_public,	   P_PUBLIC },
   { ATOM_non_terminal,	   P_NON_TERMINAL },
   { ATOM_quasi_quotation_syntax, P_QUASI_QUOTATION_SYNTAX },
+  { ATOM_dra_meta, P_DRA_CALL_META },
   { (atom_t)0,		   0 }
 };
+
+static const patt_mask dra_masks[] =
+{ 
+  { (atom_t)0,		   0 }
+};
+
 
 static unsigned int
 attribute_mask(atom_t key)
@@ -2701,7 +2708,19 @@ pl_get_predicate_attribute(term_t pred,
     }
 
     return rc;
-  } else if ( key == ATOM_foreign )
+
+#ifdef O_DRA_TABLING
+
+  } else if ( key == ATOM_dra_call )
+  { if (false(def, P_DRA_CALL_META)) fail;
+    FunctorDef draFunctorDef = def->dra_interp;
+    return PL_unify_atom(value,draFunctorDef==NULL?ATOM_dra_call:draFunctorDef->name);
+  } else if ( key == ATOM_dra_meta )
+  { if (false(def, P_DRA_CALL_META)) fail;
+    return unify_htb(value, def->pred_trie);
+#endif 
+
+  }  else if ( key == ATOM_foreign )
   { return PL_unify_integer(value, true(def, P_FOREIGN) ? 1 : 0);
   } else if ( key == ATOM_number_of_clauses )
   { if ( def->flags & P_FOREIGN )

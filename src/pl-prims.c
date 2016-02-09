@@ -33,7 +33,7 @@
 #undef LD
 #define LD LOCAL_LD
 
-static int	unify_with_occurs_check(Word t1, Word t2,
+static int	unify_with_occurs_check(Word t1, Word t2, int assignment_flags,
 					occurs_check_t mode ARG_LD);
 
 
@@ -216,16 +216,36 @@ Returns one of:
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static int
-do_unify(Word t1, Word t2 ARG_LD)
+do_unify(Word t1, Word t2, int assignment_flags ARG_LD)
 { term_agendaLR agenda;
   int compound = FALSE;
   int rc = FALSE;
-
+  
   do
   { word w1, w2;
 
     deRef(t1); w1 = *t1;
     deRef(t2); w2 = *t2;
+
+  if(META_DO_UNIFY & METATERM_ENABLED)   /* DM: dont call too early and trusting assignAttVar() with Vars */
+  {
+    if ( isAttVar(w1) )
+    { if ( !hasGlobalSpace(0) )
+      { rc = overflowCode(0);
+	goto out_fail;
+      }
+      assignAttVar(t1, t2, assignment_flags PASS_LD);
+      continue;
+    }
+    if ( isAttVar(w2) )
+    { if ( !hasGlobalSpace(0) )
+      { rc = overflowCode(0);
+	goto out_fail;
+      }
+      assignAttVar(t2, t1, assignment_flags PASS_LD);
+      continue;
+    }
+  }
 
     DEBUG(CHK_SECURE,
 	  { assert(w1 != ATOM_garbage_collected);
@@ -245,7 +265,8 @@ do_unify(Word t1, Word t2 ARG_LD)
 	}
 	if ( t1 == t2 )
 	  continue;
-	Trail(t1, makeRef(t2));
+    Trail(t1, makeRef(t2));
+
 	continue;
       }
   #ifdef O_ATTVAR
@@ -264,6 +285,7 @@ do_unify(Word t1, Word t2 ARG_LD)
       if ( isAttVar(w1) )
 	w1 = makeRef(t1);
   #endif
+
       Trail(t2, w1);
       continue;
     }
@@ -274,7 +296,7 @@ do_unify(Word t1, Word t2 ARG_LD)
       { rc = overflowCode(0);
 	goto out_fail;
       }
-      assignAttVar(t1, t2 PASS_LD);
+      assignAttVar(t1, t2, assignment_flags PASS_LD);
       continue;
     }
     if ( isAttVar(w2) )
@@ -282,7 +304,7 @@ do_unify(Word t1, Word t2 ARG_LD)
       { rc = overflowCode(0);
 	goto out_fail;
       }
-      assignAttVar(t2, t1 PASS_LD);
+      assignAttVar(t2, t1, assignment_flags PASS_LD);
       continue;
     }
   #endif
@@ -352,31 +374,13 @@ out_fail:
 
 
 static int
-raw_unify_ptrs(Word t1, Word t2 ARG_LD)
-{ switch( LD->prolog_flag.occurs_check )
-  { case OCCURS_CHECK_FALSE:
-      return do_unify(t1, t2 PASS_LD);
-    case OCCURS_CHECK_TRUE:
-      return unify_with_occurs_check(t1, t2, OCCURS_CHECK_TRUE PASS_LD);
-    case OCCURS_CHECK_ERROR:
-      return unify_with_occurs_check(t1, t2, OCCURS_CHECK_ERROR PASS_LD);
-    default:
-      assert(0);
-      fail;
-  }
-}
-
-#ifdef VERY_USEFULL_CODE
-
-
-/* This adds wakeups to attvars rather than binding them */
-static int
-raw_unify_ptrs_with_unbind(Word t1, Word t2 ARG_LD)
-{ int rc;
+raw_unify_ptrs_and_unbind(Word t1, Word t2, int assignment_flags ARG_LD)
+{ 
+  int rc;
   Word old_gTop = gTop;
   TrailEntry mt = tTop;
 
-  rc = raw_unify_ptrs_with_bind(t1, t2 PASS_LD);
+  rc = do_unify(t1, t2, ATTV_WILL_UNBIND|assignment_flags PASS_LD);
 
   /* Any attvar wakeup terms pushed to the global stack? */
   if ( rc == TRUE && old_gTop != gTop )
@@ -389,12 +393,12 @@ raw_unify_ptrs_with_unbind(Word t1, Word t2 ARG_LD)
 
       if ( isTrailVal(p) )
       { word v = trailVal(p);
-	tt--;
-	if ( isAttVar(v) )
-	{ *tt->address = v;
-	  tt->address = NULL;
-	  tt[1].address = NULL;
-	}
+       tt--;
+       if ( isAttVar(v) )
+       { *tt->address = v;
+         tt->address = NULL;
+         tt[1].address = NULL;
+       }
       }
     }
 
@@ -411,25 +415,34 @@ raw_unify_ptrs_with_unbind(Word t1, Word t2 ARG_LD)
   return rc;
 }
 
-
 static int
-raw_unify_ptrs_with_bind(Word t1, Word t2  ARG_LD)
+raw_unify_ptrs(Word t1, Word t2, int assignment_flags ARG_LD)
 { switch( LD->prolog_flag.occurs_check )
   { case OCCURS_CHECK_FALSE:
-      return do_unify(t1, t2 PASS_LD);
+    {
+         if((assignment_flags & ATTV_WILL_UNBIND))
+         { return do_unify(t1, t2, assignment_flags PASS_LD);
+         }         
+         if((assignment_flags & META_PLEASE_OPTIMIZE_TRAIL))
+         { return raw_unify_ptrs_and_unbind(t1, t2, assignment_flags PASS_LD);
+         }
+         if((assignment_flags & META_NO_OPTIMIZE_TRAIL))
+         { return do_unify(t1, t2, assignment_flags PASS_LD);
+         }
+         if(!(assignment_flags & META_PLEASE_OPTIMIZE_TRAIL))
+         { return do_unify(t1, t2, assignment_flags PASS_LD);
+         }
+         return raw_unify_ptrs_and_unbind(t1, t2, ATTV_MUST_TRAIL|assignment_flags PASS_LD);
+    }
     case OCCURS_CHECK_TRUE:
-      return unify_with_occurs_check(t1, t2, OCCURS_CHECK_TRUE PASS_LD);
-      break;
+      return unify_with_occurs_check(t1, t2, assignment_flags, OCCURS_CHECK_TRUE PASS_LD);
     case OCCURS_CHECK_ERROR:
-      return unify_with_occurs_check(t1, t2, OCCURS_CHECK_ERROR PASS_LD);
-      break;
+      return unify_with_occurs_check(t1, t2, assignment_flags, OCCURS_CHECK_ERROR PASS_LD);
     default:
       assert(0);
       fail;
   }
 }
-
-#endif
 
 
 static
@@ -472,7 +485,7 @@ unify_ptrs(Word t1, Word t2, int flags ARG_LD)
 { for(;;)
   { int rc;
 
-    rc = raw_unify_ptrs(t1, t2 PASS_LD);
+    rc = raw_unify_ptrs(t1, t2, ATTV_DEFAULT PASS_LD);
     if ( rc >= 0 )
       return rc;
 
@@ -638,25 +651,27 @@ failed_unify_with_occurs_check(Word t1, Word t2, occurs_check_t mode ARG_LD)
 
 
 static int
-unify_with_occurs_check(Word t1, Word t2, occurs_check_t mode ARG_LD)
+unify_with_occurs_check(Word t1, Word t2, int assignment_flags, occurs_check_t mode ARG_LD)
 { mark m;
   int rc;
+
+  assignment_flags |= ATTV_MUST_TRAIL;
 
   deRef(t1);
   deRef(t2);
   if ( canBind(*t1) )
   { if ( onStack(global, t1) && var_occurs_in(t1, t2 PASS_LD) )
       return failed_unify_with_occurs_check(t1, t2, mode PASS_LD);
-    return do_unify(t1, t2 PASS_LD);
+    return do_unify(t1, t2, assignment_flags PASS_LD);
   }
   if ( canBind(*t2) )
   { if ( onStack(global, t2) && var_occurs_in(t2, t1 PASS_LD) )
       return failed_unify_with_occurs_check(t1, t2, mode PASS_LD);
-    return do_unify(t1, t2 PASS_LD);
+    return do_unify(t1, t2, assignment_flags PASS_LD);
   }
 
   Mark(m);
-  rc = do_unify(t1, t2 PASS_LD);
+  rc = do_unify(t1, t2, assignment_flags PASS_LD);
   DiscardMark(m);
 
   if ( rc == TRUE )
@@ -670,10 +685,13 @@ unify_with_occurs_check(Word t1, Word t2, occurs_check_t mode ARG_LD)
       if ( isTrailVal(p) )		/* assignment of an attvars */
       { p = (--tt)->address;
 
+      if(!(META_NO_WAKEUP & assignment_flags))
+      {
 	if ( isTrailVal((--tt)->address) ) /* tail of wakeup list */
 	  tt--;
 	if ( isTrailVal((--tt)->address) ) /* head of wakeup list */
 	  tt--;
+      }
       }
 
       deRef2(p, p2);
@@ -1658,6 +1676,12 @@ do_compare(term_agendaLR *agenda, int eq ARG_LD)
     deRef(p1); w1 = *p1;
     deRef(p2); w2 = *p2;
 
+    int retcode;
+    if(METATERM_HOOK(compare,p1,p2,&retcode)) /* ECLiPSe meta_attribute */
+    { return retcode; 
+      /* This is also for ==/2 */
+    }
+
     if ( w1 == w2 )
     { if ( isVar(w1) )
 	goto cmpvars;
@@ -2235,7 +2259,7 @@ PRED_IMPL("arg", 3, arg, PL_FA_NONDETERMINISTIC)
 
 
 /* unify_vp() assumes *vp is a variable and binds it to val.
-   The assignment is *not* trailed. As no allocation takes
+   The assignment is *not* trailed. As no stack allocation takes
    place, there are no error conditions.
 */
 
@@ -2253,6 +2277,7 @@ unify_vp(Word vp, Word val ARG_LD)
       setVar(*vp);
   } else if ( isAttVar(*val) )
   { *vp = makeRef(val);
+     /* assignAttVar(val, vp, META_PEER_NO_TRAIL|ATT_ASSIGNONLY PASS_LD); */
   } else
     *vp = *val;
 }
@@ -3294,13 +3319,13 @@ also needs support in garbageCollect() and growStacks().
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 static bool
-unify_all_trail_ptrs(Word t1, Word t2, mark *m ARG_LD)
+unify_all_trail_ptrs(Word t1, Word t2, int assignment_flags, mark *m ARG_LD)
 { for(;;)
   { int rc;
 
     Mark(*m);
     LD->mark_bar = NO_MARK_BAR;
-    rc = raw_unify_ptrs(t1, t2 PASS_LD);
+    rc = raw_unify_ptrs(t1, t2, ATTV_MUST_TRAIL|assignment_flags PASS_LD);
     if ( rc == TRUE )			/* Terms unified */
     { return rc;
     } else if ( rc == FALSE )		/* Terms did not unify */
@@ -3355,9 +3380,11 @@ unifiable(term_t t1, term_t t2, term_t subst ARG_LD)
 			   PL_ATOM, ATOM_nil);
   }
 
+int assignment_flags = META_NO_WAKEUP|ATTV_MUST_TRAIL;
+
 retry:
   if ( unify_all_trail_ptrs(valTermRef(t1),	/* can do shift/gc */
-			    valTermRef(t2), &m PASS_LD) )
+			    valTermRef(t2), assignment_flags, &m PASS_LD) )
   { TrailEntry tt = tTop;
     TrailEntry mt = m.trailtop;
 
@@ -3403,19 +3430,12 @@ retry:
 	gp += 6;
 
 	if ( isTrailVal(p) )
-	{
+	{ assert(isAttVar(trailVal(p)));
 
-       /* in the case of a non-delayed assignment we may have trailed an attvar */
-       if (isAttVar(trailVal(p)))
-       {
-
-           tt--;				/* re-insert the attvar */
+	  tt--;			/* re-insert the attvar */
           *tt->address = trailVal(p);
-       }
 
-       
-       if ( tt>mt && !isAttVar(trailVal(p))) /* then must be wakeup closure pair */
-       {
+    if(META_NO_WAKEUP & assignment_flags) continue;
            tt--;				/* restore tail of wakeup list */
            p = tt->address;
            if ( isTrailVal(p) )
@@ -3433,8 +3453,6 @@ retry:
            } else
            { setVar(*p);
            }
-       }
-
 
 	  assert(tt>=mt);
 	}

@@ -3,7 +3,7 @@
     Author:        Markus Triska
     E-mail:        triska@gmx.at
     WWW:           http://www.swi-prolog.org
-    Copyright (C): 2007-2015 Markus Triska
+    Copyright (C): 2007-2016 Markus Triska
 
     This program is free software; you can redistribute it and/or
     modify it under the terms of the GNU General Public License
@@ -273,18 +273,20 @@ For supported expressions, CLP(FD) constraints are drop-in
 replacements of these low-level arithmetic predicates, often yielding
 more general programs.
 
-Here is an example:
+Here is an example, relating each natural number to its factorial:
 
 ==
 :- use_module(library(clpfd)).
 
 n_factorial(0, 1).
 n_factorial(N, F) :-
-        N #> 0, N1 #= N - 1, F #= N * F1,
+        N #> 0,
+        N1 #= N - 1,
+        F #= N * F1,
         n_factorial(N1, F1).
 ==
 
-This predicate can be used in all directions. For example:
+This relation can be used in all directions. For example:
 
 ==
 ?- n_factorial(47, F).
@@ -3389,6 +3391,11 @@ trigger_props(fd_props(Gs,Bs,Os), X) :-
         ;   true
         ).
 
+trigger_props(fd_props(Gs,Bs,Os)) :-
+        trigger_props_(Gs),
+        trigger_props_(Bs),
+        trigger_props_(Os).
+
 trigger_props_([]).
 trigger_props_([P|Ps]) :- trigger_prop(P), trigger_props_(Ps).
 
@@ -3405,30 +3412,6 @@ trigger_prop(Propagator) :-
             ;   push_queue(Propagator, 1)
             )
         ).
-
-all_propagators(fd_props(Gs,Bs,Os)) -->
-        propagators_(Gs),
-        propagators_(Bs),
-        propagators_(Os).
-
-propagators_([]) --> [].
-propagators_([P|Ps]) --> propagator_(P), propagators_(Ps).
-
-propagator_(Propagator) -->
-        { propagator_state(Propagator, State) },
-        (   { State == dead } -> []
-        ;   { get_attr(State, clpfd_aux, queued) } -> []
-        ;   { b_getval('$clpfd_current_propagator', C), C == State } -> []
-        ;   % passive
-            % format("triggering: ~w\n", [Propagator]),
-            { put_attr(State, clpfd_aux, queued) },
-            (   { arg(1, Propagator, C),
-                  functor(C, F, _), global_constraint(F) } ->
-                { push_queue(Propagator, 2) }
-            ;   [clpfd:activate_propagator(Propagator)]
-            )
-        ).
-
 
 kill(State) :- del_attr(State, clpfd_aux), State = dead.
 
@@ -6415,7 +6398,10 @@ list_first_rest([L|Ls], L, Ls).
 %% zcompare(?Order, ?A, ?B)
 %
 % Analogous to compare/3, with finite domain variables A and B.
-% Example:
+%
+% This predicate allows you to make several predicates over integers
+% deterministic while preserving their generality and completeness.
+% For example:
 %
 % ==
 % :- use_module(library(clpfd)).
@@ -6430,11 +6416,24 @@ list_first_rest([L|Ls], L, Ls).
 %         n_factorial(N1, F0).
 % ==
 %
-% This version is deterministic if the first argument is instantiated:
+% This version is deterministic if the first argument is instantiated,
+% because first argument indexing can distinguish the two different
+% clauses:
 %
 % ==
 % ?- n_factorial(30, F).
 % F = 265252859812191058636308480000000.
+% ==
+%
+% The predicate can still be used in all directions, including the
+% most general query:
+%
+% ==
+% ?- n_factorial(N, F).
+% N = 0,
+% F = 1 ;
+% N = F, F = 1 ;
+% N = F, F = 2 .
 % ==
 
 zcompare(Order, A, B) :-
@@ -6600,21 +6599,20 @@ goals_entail(Goals, E) :-
    Unification hook and constraint projection
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-verify_attributes(Var, Other, Gs) :-
-        (   get_attr(Var, clpfd, clpfd_attr(_,_,_,Dom,Ps0)) ->
-            (   nonvar(Other) ->
-                (   integer(Other) -> true
-                ;   type_error(integer, Other)
-                ),
-                domain_contains(Dom, Other),
-                Ps = Ps0
-            ;   fd_get(Other, OD, OPs),
-                domains_intersection(OD, Dom, Dom1),
-                append_propagators(Ps0, OPs, Ps),
-                fd_put(Other, Dom1, Ps)
+attr_unify_hook(clpfd_attr(_,_,_,Dom,Ps), Other) :-
+        (   nonvar(Other) ->
+            (   integer(Other) -> true
+            ;   type_error(integer, Other)
             ),
-            phrase(all_propagators(Ps), Gs, [do_queue])
-        ;   Gs = []
+            domain_contains(Dom, Other),
+            trigger_props(Ps),
+            do_queue
+        ;   fd_get(Other, OD, OPs),
+            domains_intersection(OD, Dom, Dom1),
+            append_propagators(Ps, OPs, Ps1),
+            fd_put(Other, Dom1, Ps1),
+            trigger_props(Ps1),
+            do_queue
         ).
 
 append_propagators(fd_props(Gs0,Bs0,Os0), fd_props(Gs1,Bs1,Os1), fd_props(Gs,Bs,Os)) :-
@@ -6658,23 +6656,19 @@ attribute_goals(X) -->
         attributes_goals(Ps).
 
 clpfd_aux:attribute_goals(_) --> [].
+clpfd_aux:attr_unify_hook(_,_) :- false.
 
 clpfd_gcc_vs:attribute_goals(_) --> [].
+clpfd_gcc_vs:attr_unify_hook(_,_) :- false.
 
 clpfd_gcc_num:attribute_goals(_) --> [].
+clpfd_gcc_num:attr_unify_hook(_,_) :- false.
 
 clpfd_gcc_occurred:attribute_goals(_) --> [].
+clpfd_gcc_occurred:attr_unify_hook(_,_) :- false.
 
 clpfd_relation:attribute_goals(_) --> [].
-
-/* DM: TODO - WILL BE REMOVED AFTER TESTING */
-:- if(current_prolog_flag(auh2,supplement)).
-clpfd_aux:attr_unify_hook(_,_) :- false.
-clpfd_gcc_vs:attr_unify_hook(_,_) :- false.
-clpfd_gcc_num:attr_unify_hook(_,_) :- false.
-clpfd_gcc_occurred:attr_unify_hook(_,_) :- false.
 clpfd_relation:attr_unify_hook(_,_) :- false.
-:- endif.
 
 attributes_goals([]) --> [].
 attributes_goals([propagator(P, State)|As]) -->

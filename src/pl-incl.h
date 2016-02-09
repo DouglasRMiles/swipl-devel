@@ -69,7 +69,7 @@
 
 #define PL_KERNEL		1
 #include <inttypes.h>
-#include "pl-builtin.h"
+#include "pl-builtin.h" 
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 		      PROLOG SYSTEM OPTIONS
@@ -155,6 +155,14 @@ handy for it someone wants to add a data type to the system.
 #define O_CALL_RESIDUE		1
 #define O_GVAR			1
 #define O_CYCLIC		1
+
+#define O_DRA_TABLING 1
+#define O_METATERM 1
+/*#undef O_METATERM*/
+
+#define O_UNDO_HOOK 1
+/*#undef O_UNDO_HOOK*/
+#define SAFETY_FIRST 1
 
 #if defined(O_SIGPROF_PROFILE) || defined(__WINDOWS__)
 #define O_PROFILE		1
@@ -474,8 +482,8 @@ them.  Descriptions:
 #define PLMINTAGGEDINT32	(-(intptr_t)((word)1<<(32-LMASK_BITS-1)))
 #define PLMAXTAGGEDINT32	(-PLMINTAGGEDINT32 - 1)
 #define inTaggedNumRange(n)	(valInt(consInt(n)) == (n))
-#define PLMININT		(((int64_t)-1<<(INT64BITSIZE-1)))
-#define PLMAXINT		(-(PLMININT+1))
+#define PLMININT		(-PLMAXINT - 1)
+#define PLMAXINT		((int64_t)(((uint64_t)1<<(INT64BITSIZE-1)) - 1))
 #if SIZEOF_WCHAR_T == 2
 #define PLMAXWCHAR		(0xffff)
 #else
@@ -817,23 +825,25 @@ with one operation, it turns out to be faster as well.
 
 /* Flags on predicates (packed in unsigned int */
 
+
+#define P_DRA_CALL_META  (0x00000002) /* Predicates that need called inside of dra_call/1 (especially tabled preds)*//* O_TABLING */
 #define P_QUASI_QUOTATION_SYNTAX (0x00000004) /* {|Type||Quasi Quote|} */
-#define P_NON_TERMINAL		(0x00000008) /* Grammar rule (Name//Arity) */
-#define P_SHRUNKPOW2		(0x00000010) /* See reconsider_index() */
+#define P_NON_TERMINAL	(0x00000008) /* Grammar rule (Name//Arity) */
+#define P_SHRUNKPOW2	(0x00000010) /* See reconsider_index() */
 #define P_FOREIGN		(0x00000020) /* Implemented in C */
 #define P_NONDET		(0x00000040) /* Foreign: nondet */
 #define P_VARARG		(0x00000080) /* Foreign: use alt calling API */
-#define P_FOREIGN_CREF		(0x00000100) /* Foreign: ndet ctx is clause */
+#define P_FOREIGN_CREF	(0x00000100) /* Foreign: ndet ctx is clause */
 #define P_DYNAMIC		(0x00000200) /* Dynamic predicate */
-#define P_THREAD_LOCAL		(0x00000400) /* Thread local dynamic predicate */
+#define P_THREAD_LOCAL	(0x00000400) /* Thread local dynamic predicate */
 #define P_VOLATILE		(0x00000800) /* Clauses are not saved */
-#define P_DISCONTIGUOUS		(0x00001000) /* Clauses are not together */
+#define P_DISCONTIGUOUS	(0x00001000) /* Clauses are not together */
 #define P_MULTIFILE		(0x00002000) /* Clauses are in multiple files */
 #define P_PUBLIC		(0x00004000) /* Called from somewhere */
 #define P_ISO			(0x00008000) /* Part of the ISO standard */
 #define P_LOCKED		(0x00010000) /* Locked as system predicate */
 #define P_NOPROFILE		(0x00020000) /* Profile children, not me */
-#define P_TRANSPARENT		(0x00040000) /* Inherit calling module */
+#define P_TRANSPARENT	(0x00040000) /* Inherit calling module */
 #define P_META			(0x00080000) /* Has meta_predicate declaration */
 #define P_MFCONTEXT		(0x00100000) /* Used for Goal@Module */
 #define P_DIRTYREG		(0x00200000) /* Part of GD->procedures.dirty */
@@ -843,9 +853,9 @@ with one operation, it turns out to be faster as well.
 #define TRACE_ME		(0x02000000) /* Can be debugged */
 #define TRACE_CALL		(0x04000000) /* Trace calls */
 #define TRACE_REDO		(0x08000000) /* Trace redo */
-#define TRACE_EXIT		(0x10000000) /* Trace edit */
+#define TRACE_EXIT		(0x10000000) /* Trace exit */
 #define TRACE_FAIL		(0x20000000) /* Trace fail */
-#define FILE_ASSIGNED		(0x40000000) /* Is assigned to a file */
+#define FILE_ASSIGNED	(0x40000000) /* Is assigned to a file */
 #define P_REDEFINED		(0x80000000) /* Overrules a definition */
 #define PROC_DEFINED		(P_DYNAMIC|P_FOREIGN|P_MULTIFILE|P_DISCONTIGUOUS)
 /* flags for p_reload data (reconsult) */
@@ -915,6 +925,8 @@ Macros for environment frames (local stack frames)
 #define FR_INBOX		(0x0040) /* Inside box (for REDO in built-in) */
 #define FR_CONTEXT		(0x0080) /* fr->context is set */
 #define FR_CLEANUP		(0x0100) /* setup_call_cleanup/4: marked for cleanup */
+#define FR_KEEPLTOP		(0x0200)	/* Continuations: to not reset lTop */
+#define FR_INRESET		(0x0400)	/* Continuations: inside reset/3 */
 #define FR_MAGIC_MASK		(0xfffff000)
 #define FR_MAGIC_MASK2		(0xffff0000)
 #define FR_MAGIC		(0x549d5000)
@@ -923,6 +935,7 @@ Macros for environment frames (local stack frames)
 #define wasFrame(fr)		(((fr)->flags&FR_MAGIC_MASK2) == \
 				 (FR_MAGIC&FR_MAGIC_MASK2))
 #define killFrame(fr)		clear(fr, (FR_MAGIC_MASK&~FR_MAGIC_MASK2))
+
 
 #define ARGOFFSET		((int)sizeof(struct localFrame))
 #define VAROFFSET(var)		((var)+(ARGOFFSET/(int)sizeof(word)))
@@ -985,10 +998,12 @@ typedef uint64_t lgen_t;
 #endif /*O_LOGICAL_UPDATE*/
 
 #define FR_CLEAR_NEXT	FR_SKIPPED|FR_WATCHED|FR_CATCHED|FR_HIDE_CHILDS|FR_CLEANUP
+#define FR_CLEAR_FLAGS	(FR_CLEAR_NEXT|FR_CONTEXT|FR_KEEPLTOP)
+
 #define setNextFrameFlags(next, fr) \
 	do \
 	{ (next)->level = (fr)->level+1; \
-	  (next)->flags = ((fr)->flags) & ~(FR_CLEAR_NEXT|FR_CONTEXT); \
+	  (next)->flags = ((fr)->flags) & ~FR_CLEAR_FLAGS; \
 	} while(0)
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1305,6 +1320,7 @@ typedef struct clause_index_list
   struct clause_index_list *next;
 } clause_index_list, *ClauseIndexList;
 
+
 #define MAX_BLOCKS 20			/* allows for 2M threads */
 
 typedef struct local_definitions
@@ -1317,6 +1333,21 @@ typedef __int64 meta_mask;		/* MSVC cannot do typedef of typedef!? */
 #else
 typedef uint64_t meta_mask;
 #endif
+
+
+#define HT_W_REFS_MAGIC 666777
+typedef struct hashtable_with_grefs
+{ Table	root; /* atom --> value */
+  int grefs;			/* references to global stack */
+  atom_t	symbol;			/* <hashtable_with_grefs>(...)  */
+  int		magic;			/* HT_W_REFS_MAGIC */
+ /* u_int32_t	flags;		*/	/* flags used to open the database */
+} hashtable_with_grefs;
+
+typedef struct htref { 
+  hashtable_with_grefs *value;
+} htref;
+
 
 struct definition
 { FunctorDef	functor;		/* Name/Arity of procedure */
@@ -1332,6 +1363,10 @@ struct definition
   struct bit_vector *tried_index;	/* Arguments on which we tried to index */
   meta_mask	meta_info;		/* meta-predicate info */
   unsigned int  flags;			/* booleans (P_*) */
+#ifdef O_DRA_TABLING
+  FunctorDef dra_interp;         /* VMI calls this Name/1 instead */
+  hashtable_with_grefs* pred_trie; /*  */
+#endif
   unsigned int  shared;			/* #procedures sharing this def */
 #ifdef O_PROF_PENTIUM
   int		prof_index;		/* index in profiling */
@@ -1951,8 +1986,8 @@ size N on the global stack AND  can   use  bindConst()  to bind it to an
 (attributed) variable.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
-#define BIND_GLOBAL_SPACE (10)
-#define BIND_TRAIL_SPACE (6)
+#define BIND_GLOBAL_SPACE (12)
+#define BIND_TRAIL_SPACE (8)
 #define hasGlobalSpace(n) \
 	(likely(gTop+(n)+BIND_GLOBAL_SPACE <= gMax) && \
 	 likely(tTop+BIND_TRAIL_SPACE <= tMax))
@@ -1979,6 +2014,7 @@ typedef struct
   av_action on_attvar;			/* How to handle attvars */
   int	    singletons;			/* Write singletons as $VAR('_') */
   int	    numbered_check;		/* Check for already numbered */
+  int	    restart_on_each_compund; /* Start at offset in each inner compound term (for memoization code) */
 } nv_options;
 
 #define BEGIN_NUMBERVARS(save) \
@@ -1998,9 +2034,94 @@ typedef struct
 		 *      ATTVAR ASSIONMENT	*
 		 *******************************/
 
-/* assignAttVar() flags */
-#define ATT_WAKEBINDS   0x1			/* default */
-#define ATT_UNIFY_CHECK 0x2			/* 'unifiable'/3 */
+/* assignAttVar() flags  - All defaulted to false */
+
+/* This adds wakeups to attvars rather than binding them */
+#define ATTV_DEFAULT     META_DEFAULT   /* bindConst() */
+#define ATTV_ASSIGNONLY  0x02		 /* '$attvar_assign'/2 */
+#define ATTV_MUST_TRAIL  0x04        /* unifiable/3 and Occurs checking needs attvars trailed  */
+#define ATTV_WILL_UNBIND 0x08        /* Set true whenever attempting to optimize trail (in order to minimize wakeups) */
+
+#define GROW_OR_RET_OVERFLOW(n) if ( !hasGlobalSpace(n) ) { int rc; if ( (rc=ensureGlobalSpace(n, ALLOW_GC)) != TRUE ) return raiseStackOverflow(rc); }
+
+#define LD_no_wakeup LD->attvar.no_wakeups
+
+#define IS_META(option) ((flags & option) != 0)
+
+		 /*******************************
+		 *	      METATERMS           	*
+		 *******************************/
+
+#define META_NO_BIND        0x0010 /* C should not bind attvar even in ASSIGNONLY  */
+#define META_NO_WAKEUP  	0x0020 /* Dont call wakeup */
+#define META_NO_OPTIMIZE_TRAIL 0x0040 /* Dont Optimize Trail (Multiple wakeups) */
+// #define META_NO_TRAIL       0x0040 /* Do not bother to trail the previous value */
+#define META_KEEP_BOTH  	0x0080 /* allow attvar survival */
+
+
+#define META_DO_UNIFY  	    0x0100 /* debugging for a moment trying to guage if damaging do_unify() 
+                                    Goal, really I would like to figure out the best way to allow unification to 
+                                    a between an attvar and a variable.   Instead of merly placing the entire attvar self into the variable,
+                                    I want the attvar's hook to copy some attributes onto the plain variable (turning it into an attvar)
+                                    as the result of unification.                                    
+                                 */
+
+#define META_DISABLE_SWAP   0x0200 /* dont sort attvars for unification */
+
+#define META_NO_INHERIT     0x0400 /* This Metaterm doest not inherit from 'matts_default' flags (otherwise they are or-ed) */
+#define META_DISABLED   	0x0800 /* disable all options (allows the options to be saved) */
+
+#define META_ENABLE_VMI  	0x1000 /* Hook WAM */
+#define META_ENABLE_CPREDS	0x2000 /* Hook CPREDS (WAM can misses a few)*/
+#define META_SKIP_HIDDEN  	0x4000 /* dont factor $meta into attvar identity */
+#define META_ENABLE_UNDO    0x8000 /* check attvars for undo hooks (perfomance checking) */
+#define META_ENABLE_PREUNIFY 0x010000 /* verify_attributes/3 (sanity and/or perfomance checking) */
+#define META_WAKEBINDS       0x020000 /* C should let only prolog do binding */
+
+#define META_PLEASE_OPTIMIZE_TRAIL    0x040000 /* Make the default to optimize trail */
+
+
+#define SLOW_UNIFY_DEFAULT TRUE
+#define META_DEFAULT  	    (META_ENABLE_VMI|META_SKIP_HIDDEN|META_ENABLE_CPREDS|META_NO_OPTIMIZE_TRAIL)
+
+#define  B_PUTATTS 0x0
+#define NB_PUTATTS 0x1
+
+#define LOGICMOO_TRANSPARENT FALSE
+
+#ifdef O_METATERM
+
+#define METATERM_GLOBAL_FLAGS (METATERM_CURRENT = isVar(*METATERM_GLOBAL)?META_DEFAULT:valInteger(*METATERM_GLOBAL))
+#define METATERM_GLOBAL valPHandle(LD->attvar.metaterm_opts PASS_LD)
+#define METATERM_CURRENT LD->attvar.metaterm_current
+
+/*
+ METATERM_SKIP_HIDDEN(.)
+ Only when "$meta" is present as an attribute:
+   A feature for prolog programmers who want to hide their attributes from value 
+  based term comparisons like "=@=" and "=="  
+  They do so by put_attrs/2 their attrbute "imhiden" as parent of "$meta" like:
+      att(imhiden,value,att('$meta',0,VisibleAtts)) to hide them. 
+  ( "$meta" attribute is also hidden. )
+  */
+
+#define METATERM_SKIP_HIDDEN(ValPAttVar) (META_SKIP_HIDDEN & METATERM_ENABLED ? attrs_after(ValPAttVar,ATOM_dmeta PASS_LD): ValPAttVar)
+#define METATERM_ENABLED  METATERM_GLOBAL_FLAGS && (!(METATERM_CURRENT & META_DISABLED) && (!exception_term || isVar(*valTermRef(exception_term))))
+#define METATERM_OVERIDES(var,atom) METATERM_ENABLED && isMetaOverriden(var, atom, META_ENABLE_CPREDS PASS_LD)
+#define METATERM_HOOK(atom,t1,t2,rc)  (META_ENABLE_CPREDS & METATERM_ENABLED && \
+                    (((tag(*t1)==TAG_ATTVAR && METATERM_OVERIDES(t1,ATOM_ ## atom))  || \
+                      (tag(*t2)==TAG_ATTVAR && METATERM_OVERIDES(t2,ATOM_ ## atom)))) && \
+                       metatermOverride(ATOM_ ## atom,t1,t2,rc PASS_LD))
+#define POST_SKIP_HIDDEN(l,r) if (*l==*r && *l==ATOM_nil) continue
+/*#define IS_META_VAR_D(var,option) (((tag(*var) == TAG_ATTVAR && METATERM_ENABLED && IS_META((METATERM_CURRENT=getMetaFlags(var,META_NO_INHERIT)),option))))*/
+
+#else  /* for less noisey undefing of O_METATERM */
+#define METATERM_SKIP_HIDDEN(ValPAttVar) ValPAttVar
+#define METATERM_OVERIDES(var,atom) (0)
+#define METATERM_HOOK(atom,t1,t2,rc) (0)
+#define POST_SKIP_HIDDEN(l,r) (void)0
+#define METATERM_ENABLED (0)
+#endif
 
 		 /*******************************
 		 *	      WAKEUP		*
@@ -2101,6 +2222,7 @@ typedef struct
 		*********************************/
 
 #define PROCEDURE_catch3		(GD->procedures.catch3)
+#define PROCEDURE_reset3		(GD->procedures.reset3)
 #define PROCEDURE_true0			(GD->procedures.true0)
 #define PROCEDURE_fail0			(GD->procedures.fail0)
 #define PROCEDURE_event_hook1		(GD->procedures.event_hook1)

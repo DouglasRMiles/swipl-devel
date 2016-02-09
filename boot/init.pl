@@ -65,7 +65,8 @@ attempt to call the Prolog defined trace interceptor.
 	thread_local(:),
 	noprofile(:),
 	'$iso'(:),
-	'$hide'(:).
+	'$hide'(:),
+        dra_meta(:).
 
 %%	dynamic(+Spec)
 %%	multifile(+Spec)
@@ -85,6 +86,15 @@ noprofile(Spec)		 :- '$set_pattr'(Spec, pred, (noprofile)).
 public(Spec)		 :- '$set_pattr'(Spec, pred, (public)).
 '$iso'(Spec)		 :- '$set_pattr'(Spec, pred, (iso)).
 
+
+%%	'dra_meta'(:PI)
+%
+%	Predicates declared this way are called through dra_call/1.
+
+dra_meta(Spec)           :- '$set_pattr'(Spec, pred, (dra_meta)=true).
+dra_non_meta(Spec)       :- '$set_pattr'(Spec, pred, (dra_meta)=false).
+
+
 '$set_pattr'(M:Pred, How, Attr) :-
 	'$set_pattr'(Pred, M, How, Attr).
 
@@ -100,6 +110,10 @@ public(Spec)		 :- '$set_pattr'(Spec, pred, (public)).
 	'$set_pattr'(B, M, How, Attr).
 '$set_pattr'(M:T, _, How, Attr) :- !,
 	'$set_pattr'(T, M, How, Attr).
+
+
+'$set_pattr'(A, M, pred, Attr=TF) :- !,
+	'$set_predicate_attribute'(M:A, Attr, TF).
 '$set_pattr'(A, M, pred, Attr) :- !,
 	'$set_predicate_attribute'(M:A, Attr, true).
 '$set_pattr'(A, M, directive, Attr) :- !,
@@ -130,6 +144,10 @@ public(Spec)		 :- '$set_pattr'(Spec, pred, (public)).
 	'$set_pattr'(Spec, M, directive, (noprofile)).
 '$pattr_directive'(public(Spec), M) :-
 	'$set_pattr'(Spec, M, directive, (public)).
+'$pattr_directive'(dra_meta(Spec), M) :-
+	'$set_pattr'(Spec, M, directive, (dra_meta=true)).
+'$pattr_directive'(dra_non_meta(Spec), M) :-
+	'$set_pattr'(Spec, M, directive, (dra_meta=false)).
 
 
 %%	'$hide'(:PI)
@@ -172,6 +190,7 @@ public(Spec)		 :- '$set_pattr'(Spec, pred, (public)).
 	once(0),
 	ignore(0),
 	catch(0,?,0),
+	reset(0,-,?),
 	setup_call_cleanup(0,0,0),
 	setup_call_catcher_cleanup(0,0,?,0),
 	call_cleanup(0,0),
@@ -193,6 +212,35 @@ public(Spec)		 :- '$set_pattr'(Spec, pred, (public)).
 (If  -> Then)     :-    call((If  -> Then)).
 (If *-> Then)     :-    call((If *-> Then)).
 @(Goal,Module)	  :-    @(Goal,Module).
+
+%%	'$meta_call'(:Goal)
+%
+%	Meta call handling when we are inside reset/3
+%
+%	@tbd: move reset/3, etc into a library?
+%	@tbd: deal with the !
+
+'$meta_call'((A,B)) :-
+	call(A), call(B).
+'$meta_call'((I->T;E)) :- !,
+	(   call(I)
+	->  call(T)
+	;   call(E)
+	).
+'$meta_call'((I*->T;E)) :- !,
+	(   call(I)
+	*-> call(T)
+	;   call(E)
+	).
+'$meta_call'((I->T)) :- !,
+	(   call(I)
+	->  call(T)
+	).
+'$meta_call'((A;B)) :-
+	(   call(A)
+	;   call(B)
+	).
+
 
 %%	call(Closure, Arg, ...)
 %
@@ -280,6 +328,34 @@ catch(_Goal, _Catcher, _Recover) :-
 
 prolog_cut_to(_Choice) :-
 	'$cut'.				% Maps to I_CUTCHP
+
+%%	reset(:Goal, -Continue, ?Ball)
+%
+%	Delimited continuation support.
+
+reset(Goal, Cont, Ball) :-
+	'$start_reset',
+	call(Goal),
+	Cont = 0,
+	Ball = 0.			% only reached if there is no shift
+
+%%	call_continuation(+Continuation:list)
+%
+%	Call a continuation as created by shift/1. The continuation is a
+%	lost  of  '$cont$'(Clause,  PC,   Environment)  structures.  The
+%	predicate  '$call_one_tail_body'/1  creates  a  frame  from  the
+%	continuation and calls this.
+%
+%	Note that we can technically also   push the entire continuation
+%	onto the environment and call  it.   Doing  it  incrementally as
+%	below exploits last-call  optimization   and  therefore possible
+%	quadratic expansion of the continuation.
+
+call_continuation([]).
+call_continuation([TB|Rest]) :-
+	'$call_one_tail_body'(TB),
+	call_continuation(Rest).
+
 
 %%	'$recover_and_rethrow'(:Goal, +Term)
 %
@@ -375,6 +451,19 @@ initialization(Goal, When) :-
 '$compile_init_goal'(Source, Goal, Ctx) :-
 	assertz('$init_goal'(Source, Goal, Ctx)).
 
+
+%%	'$run_initialization'(?File, +Options)
+%%	'$run_initialization'(?File, +Action, +Options)
+%
+%	Run initialization directives for all files  if File is unbound,
+%	or for a specified file.   Note  that '$run_initialization'/2 is
+%	called from runInitialization() in pl-wic.c  for .qlf files. The
+%	'$run_initialization'/3 is called with Action   set  to `loaded`
+%	when called for a QLF file.
+
+'$run_initialization'(_, loaded, _) :- !.
+'$run_initialization'(File, _Action, Options) :-
+	'$run_initialization'(File, Options).
 
 '$run_initialization'(File, Options) :-
 	setup_call_cleanup(
@@ -830,6 +919,9 @@ user:prolog_file_type(Ext,	executable) :-
 %	File is a specification of a Prolog source file. Return the full
 %	path of the file.
 
+'$chk_file'(Spec, _Extensions, _Cond, _Cache, _FullName) :-
+	\+ ground(Spec), !,
+	'$instantiation_error'(Spec).
 '$chk_file'(Spec, Extensions, Cond, Cache, FullName) :-
 	compound(Spec),
 	functor(Spec, _, 1), !,
@@ -860,11 +952,7 @@ user:prolog_file_type(Ext,	executable) :-
 '$segments_to_atom'(Segments, Atom) :-
 	'$segments_to_list'(Segments, List, []), !,
 	atomic_list_concat(List, /, Atom).
-'$segments_to_atom'(Segments, _) :-
-	throw(error(type_error(file_path, Segments), _)).
 
-'$segments_to_list'(Var, _, _) :-
-	var(Var), !, fail.
 '$segments_to_list'(A/B, H, T) :-
 	'$segments_to_list'(A, H, T0),
 	'$segments_to_list'(B, T0, T).
@@ -1738,8 +1826,8 @@ load_files(Module:Files, Options) :-
 '$load_file'(File, Module, Options) :-
 	memberchk(stream(_), Options), !,
 	'$assert_load_context_module'(File, Module, Options),
-	'$qdo_load_file'(File, File, Module, Options),
-	'$run_initialization'(File, Options).
+	'$qdo_load_file'(File, File, Module, Action, Options),
+	'$run_initialization'(File, Action, Options).
 '$load_file'(File, Module, Options) :-
 	absolute_file_name(File,
 			   [ file_type(prolog),
@@ -1802,8 +1890,8 @@ load_files(Module:Files, Options) :-
 	'$noload'(If, FullFile, Options), !,
 	'$already_loaded'(File, FullFile, Module, Options).
 '$mt_load_file'(File, FullFile, Module, Options) :-
-	'$qdo_load_file'(File, FullFile, Module, Options).
-
+	'$qdo_load_file'(File, FullFile, Module, Action, Options),
+	'$run_initialization'(FullFile, Action, Options).
 
 '$mt_start_load'(FullFile, queue(Queue), _) :-
 	'$loading_file'(FullFile, Queue, LoadThread),
@@ -1822,8 +1910,8 @@ load_files(Module:Files, Options) :-
 '$mt_do_load'(already_loaded, File, FullFile, Module, Options) :- !,
 	'$already_loaded'(File, FullFile, Module, Options).
 '$mt_do_load'(_Ref, File, FullFile, Module, Options) :-
-	'$qdo_load_file'(File, FullFile, Module, Options),
-	'$run_initialization'(FullFile, Options).
+	'$qdo_load_file'(File, FullFile, Module, Action, Options),
+	'$run_initialization'(FullFile, Action, Options).
 
 '$mt_end_load'(queue(_)) :- !.
 '$mt_end_load'(already_loaded) :- !.
@@ -1838,13 +1926,14 @@ load_files(Module:Files, Options) :-
 %
 %	Switch to qcompile mode if requested by the option '$qlf'(+Out)
 
-'$qdo_load_file'(File, FullFile, Module, Options) :-
+'$qdo_load_file'(File, FullFile, Module, Action, Options) :-
 	memberchk('$qlf'(QlfOut), Options), !,
-	setup_call_cleanup('$qstart'(QlfOut, Module, State),
-			   '$do_load_file'(File, FullFile, Module, Options),
-			   '$qend'(State)).
-'$qdo_load_file'(File, FullFile, Module, Options) :-
-	'$do_load_file'(File, FullFile, Module, Options).
+	setup_call_cleanup(
+	    '$qstart'(QlfOut, Module, State),
+	    '$do_load_file'(File, FullFile, Module, Action, Options),
+	    '$qend'(State)).
+'$qdo_load_file'(File, FullFile, Module, Action, Options) :-
+	'$do_load_file'(File, FullFile, Module, Action, Options).
 
 '$qstart'(Qlf, Module, state(OldMode, OldModule)) :-
 	'$qlf_open'(Qlf),
@@ -1860,20 +1949,21 @@ load_files(Module:Files, Options) :-
 	'$current_source_module'(OldModule),
 	'$set_source_module'(Module).
 
-%%	'$do_load_file'(+Spec, +FullFile, +ContextModule, +Options) is det.
+%%	'$do_load_file'(+Spec, +FullFile, +ContextModule,
+%			-Action, +Options) is det.
 %
 %	Perform the actual loading.
 
-'$do_load_file'(File, FullFile, Module, Options) :-
+'$do_load_file'(File, FullFile, Module, Action, Options) :-
 	'$option'(derived_from(DerivedFrom), Options, -),
 	'$register_derived_source'(FullFile, DerivedFrom),
 	'$qlf_file'(File, FullFile, Absolute, Mode, Options),
 	(   Mode == qcompile
 	->  qcompile(Module:File, Options)
-	;   '$do_load_file_2'(File, Absolute, Module, Options)
+	;   '$do_load_file_2'(File, Absolute, Module, Action, Options)
 	).
 
-'$do_load_file_2'(File, Absolute, Module, Options) :-
+'$do_load_file_2'(File, Absolute, Module, Action, Options) :-
 	'$source_file_property'(Absolute, number_of_clauses, OldClauses),
 	statistics(cputime, OldTime),
 

@@ -31,12 +31,29 @@ symbol lookup and relocations.
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 /* pl-attvar.c */
-COMMON(void)		assignAttVar(Word av, Word value ARG_LD);
+COMMON(void)		assignAttVar(Word av, Word value, int assignment_flags ARG_LD);
 COMMON(int)		saveWakeup(wakeup_state *state, int forceframe ARG_LD);
 COMMON(void)		restoreWakeup(wakeup_state *state ARG_LD);
 COMMON(int)		PL_get_attr__LD(term_t t, term_t a ARG_LD);
 COMMON(int)		on_attvar_chain(Word avp);
 COMMON(Word)		alloc_attvar(ARG1_LD);
+COMMON(void)		registerWakeup(functor_t wakeup_type4,  Word attvar, Word attrs, Word value ARG_LD);
+
+COMMON(void)	scheduleWakeup(word g, int alert_flags ARG_LD);
+
+#ifdef O_UNDO_HOOK
+COMMON(int) find_attr(Word av, atom_t name, Word *vp ARG_LD);
+#endif
+
+#ifdef O_METATERM
+COMMON(int)     metatermOverride(atom_t method, Word av, Word value, int* hook_result ARG_LD);
+COMMON(bool)  isMetaOverriden(Word av, word metaprop, int override_flags ARG_LD);
+COMMON(functor_t)  getMetaOverride(Word av, functor_t metaprop, int override_flags ARG_LD);
+COMMON(Word) 	attrs_after(Word av, atom_t hidden_prop ARG_LD);
+COMMON(Word) 	valPHandle(term_t r ARG_LD);
+
+COMMON(int)  unify_htb(term_t handle, hashtable_with_grefs *ht);
+#endif
 
 /* pl-gvar.c */
 
@@ -252,6 +269,7 @@ COMMON(int)		PL_is_atom__LD(term_t t ARG_LD);
 COMMON(int)		PL_unify_list__LD(term_t l, term_t h, term_t t ARG_LD);
 COMMON(int)		PL_cons_list__LD(term_t l, term_t head, term_t tail
 					 ARG_LD);
+COMMON(int)		PL_cons_list_v(term_t list, size_t count, term_t elems);
 COMMON(int)		PL_is_inf(term_t t);
 COMMON(int)		PL_same_term__LD(term_t t1, term_t t2 ARG_LD);
 COMMON(int)		isUCSAtom(Atom a);
@@ -303,6 +321,8 @@ COMMON(word)		check_foreign(void);	/* DEBUG(CHK_SECURE...) stuff */
 COMMON(void)		markAtomsOnStacks(PL_local_data_t *ld);
 COMMON(void)		markPredicatesInEnvironments(PL_local_data_t *ld);
 COMMON(QueryFrame)	queryOfFrame(LocalFrame fr);
+COMMON(void)		mark_active_environment(struct bit_vector *active,
+						LocalFrame fr, Code PC);
 #if defined(O_DEBUG) || defined(SECURE_GC) || defined(O_MAINTENANCE)
 word			checkStacks(void *vm_state);
 COMMON(bool)		scan_global(int marked);
@@ -392,6 +412,9 @@ COMMON(intptr_t)	lengthList(term_t list, int errors);
 COMMON(int)		is_acyclic(Word p ARG_LD);
 COMMON(intptr_t)	numberVars(term_t t, nv_options *opts, intptr_t n ARG_LD);
 COMMON(int)		duplicate_term(term_t in, term_t copy ARG_LD);
+COMMON(int)		copy_term_refs(term_t from, term_t to, int flags ARG_LD);
+
+
 COMMON(word)		stringToList(char *s);
 COMMON(foreign_t)	pl_sub_atom(term_t atom,
 				    term_t before, term_t len, term_t after,

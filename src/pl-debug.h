@@ -86,6 +86,9 @@
 #define MSG_REC_ATTVAR		 55
 
 #define MSG_READ_TOKEN		 60
+
+#define MSG_CONTINUE		 143
+
 						/* GC messages */
 #define	MSG_AGC			 100
 #define	MSG_CLAUSE_GC		 101
@@ -117,6 +120,10 @@
 
 #define MSG_ATTVAR_LINK		 150
 #define MSG_CALL_RESIDUE_VARS	 151
+#define MSG_WAKEUPS	 	152
+#define MSG_METATERM	 	153
+#define MSG_ATTVAR_GENERAL 	154
+#define MSG_DRA	 	155
 
 #define MSG_HASH_TABLE_API	 160
 #define MSG_HASH_TABLE_KVS	 161

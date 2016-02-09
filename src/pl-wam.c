@@ -1238,6 +1238,24 @@ __do_undo(mark *m ARG_LD)
     if ( isTrailVal(p) )
     { DEBUG(2, Sdprintf("Undoing a trailed assignment\n"));
       tt--;
+#ifdef O_UNDO_HOOK
+     if(META_ENABLE_UNDO & METATERM_ENABLED)
+     { Word unused;
+       word older = trailVal(p);
+       Word location = tt->address;
+       word newer = *location;
+       *location = older; 
+       if(isAttVar(older) && find_attr(location, ATOM_dundo_unify, &unused PASS_LD))
+       { DEBUG(MSG_METATERM, Sdprintf("UNDO-ing\n"));
+         if(!metatermOverride(ATOM_dundo_unify,location,&newer,NULL PASS_LD))
+         { DEBUG(MSG_METATERM, Sdprintf("UNDO FAILED"));
+         }
+        /* DM:  I would have prefered to...
+            scheduleWakeup(newer, TRUE PASS_LD); <- problem was the when wakeups ran 'newer's inner arguments are already gone (untrailed)
+          Slightly confused why this doesnt happen to the metatermOverride.. see code called in attvar.pl .. why doesn't it need copy_term/2 ?  */      
+      }
+     } else
+#endif
       *tt->address = trailVal(p);
       DEBUG(CHK_SECURE,
 	    if ( isAttVar(*tt->address) )
@@ -1526,6 +1544,7 @@ resumeAfterException(int clear, Stack outofstack)
 
   if ( clear )
   { exception_term = 0;
+    LD->exception.fr_rewritten = 0;
     setVar(*valTermRef(LD->exception.bin));
     setVar(*valTermRef(LD->exception.printed));
     setVar(*valTermRef(LD->exception.pending));
@@ -1686,6 +1705,12 @@ Note that when throwing from a catch/3,   the  catcher is subject to GC.
 Hence, we should not call can_unify() if  it has been garbage collected.
 Doing so generally does no harm as the unification will fail, but is not
 elegant and traps an assert() in do_unify().
+
+Returns:
+
+  - term-reference to catch/3 frame
+  - (term_t)0 if not caught
+  - (term_t)-1 if caught in C
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 #ifndef offset
@@ -1693,7 +1718,7 @@ elegant and traps an assert() in do_unify().
 #endif
 
 #ifdef O_DEBUGGER
-static int
+static term_t
 isCaughtInOuterQuery(qid_t qid, term_t ball ARG_LD)
 { Definition catch3 = PROCEDURE_catch3->definition;
   QueryFrame qf = QueryFromQid(qid);
@@ -1712,7 +1737,7 @@ isCaughtInOuterQuery(qid_t qid, term_t ball ARG_LD)
 	     can_unify(catcher,		/* may shift */
 		       valTermRef(ball),
 		       0) )
-	  return TRUE;
+	  return fref;
 	fr = (LocalFrame)valTermRef(fref);
       }
 
@@ -1725,7 +1750,10 @@ isCaughtInOuterQuery(qid_t qid, term_t ball ARG_LD)
     }
   }
 
-  return (qf && true(qf, PL_Q_CATCH_EXCEPTION));
+  if ( qf && true(qf, PL_Q_CATCH_EXCEPTION) )
+    return (term_t)-1;
+
+  return 0;
 }
 
 
@@ -1800,7 +1828,7 @@ dbgRedoFrame(LocalFrame fr, choice_type cht ARG_LD)
 #endif /*O_DEBUGGER*/
 
 static int
-exception_hook(LocalFrame fr, term_t catchfr_ref ARG_LD)
+exception_hook(qid_t pqid, term_t fr, term_t catchfr_ref ARG_LD)
 { if ( PROCEDURE_exception_hook4->definition->impl.clauses.first_clause )
   { if ( !LD->exception.in_hook )
     { wakeup_state wstate;
@@ -1814,13 +1842,26 @@ exception_hook(LocalFrame fr, term_t catchfr_ref ARG_LD)
 
       av = PL_new_term_refs(4);
       PL_put_term(av+0, exception_bin);
-      PL_put_frame(av+2, fr);
-      if ( catchfr_ref )
+      PL_put_frame(av+2, (LocalFrame)valTermRef(fr));
+
+      if ( !catchfr_ref )
+	catchfr_ref = isCaughtInOuterQuery(pqid, exception_term PASS_LD);
+      if ( catchfr_ref == (term_t)-1 )
+      { PL_put_atom_chars(av+3, "C");
+      } else if ( catchfr_ref && catchfr_ref == LD->exception.fr_rewritten )
+      { DEBUG(MSG_THROW,
+	    Sdprintf("Already rewritting exception for frame %d\n",
+		     catchfr_ref));
+	rc = FALSE;
+	goto done;
+      } else if ( catchfr_ref )
       { LocalFrame cfr = (LocalFrame)valTermRef(catchfr_ref);
 	cfr = parentFrame(cfr);
 	PL_put_frame(av+3, cfr);
+	LD->exception.fr_rewritten = catchfr_ref;
       } else
-	PL_put_frame(av+3, NULL);	/* puts 'none' */
+      { PL_put_frame(av+3, NULL);	/* puts 'none' */
+      }
 
       qid = PL_open_query(MODULE_user, PL_Q_NODEBUG|PL_Q_CATCH_EXCEPTION,
 			  PROCEDURE_exception_hook4, av);
@@ -1849,8 +1890,9 @@ exception_hook(LocalFrame fr, term_t catchfr_ref ARG_LD)
       } else
       { rc = FALSE;
       }
-      restoreWakeup(&wstate PASS_LD);
 
+    done:
+      restoreWakeup(&wstate PASS_LD);
       LD->exception.in_hook--;
 
       return rc;
@@ -2575,6 +2617,65 @@ typedef enum
 	PC    = cref->value.clause->codes; \
 	NEXT_INSTRUCTION;
 
+#ifdef O_METATERM 
+#define CHECK_METATERM(a0) /*if(META_ENABLE_VMI & METATERM_ENABLED){Definition newDef = swap_out_functor((Definition)DEF,a0 PASS_LD); if(newDef && DEF!=newDef) {DEF=newDef; }}*/
+/* DM: possiblely anything that started in usercallN ends up inf foreign call.. so  swap_out_functor() might be able to be removed*/
+#define CHECK_FMETATERM(a0) if(META_ENABLE_VMI & METATERM_ENABLED){Definition newDef = swap_out_ffunctor((Definition)DEF,a0 PASS_LD); if(newDef && DEF!=newDef) {DEF=newDef; goto normal_call; }}
+
+/* check attvar meta hooks */
+static inline
+Definition swap_out_ffunctor(Definition DEF, term_t h0 ARG_LD )
+{ size_t current_arity = ((Definition)DEF)->functor->arity;
+  if (!(current_arity > 0))  return DEF; /* DM: will look into perhaps runing this code during  !(LD->alerted & ALERT_WAKEUP) && PL_is_variable(exception_term))*/
+  assert(LD_no_wakeup<5); /*catch loops*/
+  for( ; current_arity-->0 ; h0++)
+  {   Word argAV = valTermRef(h0);
+      deRef(argAV);              
+      if(argAV && isAttVar(*argAV))
+      { functor_t current_functor = ((Definition)DEF)->functor->functor;
+        functor_t alt_functor = getMetaOverride(argAV,current_functor, META_ENABLE_VMI PASS_LD);
+        if(alt_functor && alt_functor!=current_functor) 
+        { Definition altDEF = lookupDefinition(alt_functor,resolveModule(0));
+          if(altDEF)
+          { DEBUG(MSG_METATERM, Sdprintf("FOREIGN: using overriden ffunctor for metatype"));
+              return altDEF;
+          }
+          DEBUG(MSG_METATERM, Sdprintf("FOREIGN: missing overriden ffunctor for metatype"));
+        }
+      }        
+  }
+  return DEF;
+}
+
+/* IS DISABLED RIGHT NOW (segv's sometimes) check attvar meta hooks (only the last arg is looked at though)*/
+static inline
+Definition swap_out_functor(Definition DEF, Word argV ARG_LD )
+{ size_t current_arity = ((Definition)DEF)->functor->arity;
+  if (!(current_arity > 0))  return DEF; /* DM: will look into perhaps runing this code during  !(LD->alerted & ALERT_WAKEUP) && PL_is_variable(exception_term))*/
+  assert(LD_no_wakeup<5); /*catch loops*/
+  Word ARG = argV - current_arity;
+  for( ; current_arity-->0 ; ARG++) /* DM: How is this suppsoed to be coded?  I am assuming something wrong? */    
+  {   Word argAV = ARG;
+      deRef(argAV);  
+      if(isAttVar(*argAV))
+      { functor_t current_functor = ((Definition)DEF)->functor->functor;
+        functor_t alt_functor = getMetaOverride(argAV,current_functor, META_ENABLE_VMI PASS_LD);
+        if(alt_functor && alt_functor!=current_functor) 
+        { Definition altDEF = lookupDefinition(alt_functor,resolveModule(0));
+          if(altDEF)
+          { DEBUG(MSG_METATERM, Sdprintf("INTERP: using overriden functor for metatype"));
+              return altDEF;
+          }
+          DEBUG(MSG_METATERM, Sdprintf("INTERP: missing overriden functor for metatype"));
+        }
+      }        
+      /* derefing the next arg seems to segv  (so exit here) */
+      return DEF;
+  }
+  return DEF;
+}
+
+#endif
 
 int
 PL_next_solution(qid_t qid)
@@ -2587,7 +2688,7 @@ PL_next_solution(qid_t qid)
   Code	     PC = NULL;			/* program counter */
   Definition DEF = NULL;		/* definition of current procedure */
   unify_mode umode = uread;		/* Unification mode */
-  int slow_unify = FALSE;		/* B_UNIFY_FIRSTVAR */
+  int slow_unify = SLOW_UNIFY_DEFAULT; /* B_UNIFY_FIRSTVAR */
   exception_frame throw_env;		/* PL_thow() environment */
 #ifdef O_DEBUG
   int	     throwed_from_line=0;	/* Debugging: line we came from */
@@ -2748,7 +2849,8 @@ resumebreak:
 Attributed variable handling
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 wakeup:
-  DEBUG(1, Sdprintf("Activating wakeup\n"));
+  LD->alerted &= ~ALERT_WAKEUP;
+  DEBUG(MSG_WAKEUPS, Sdprintf("Activating wakeup\n"));
   NFR = lTop;
   setNextFrameFlags(NFR, FR);
   SAVE_REGISTERS(qid);

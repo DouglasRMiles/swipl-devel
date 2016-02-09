@@ -380,6 +380,9 @@ DECL_PLIST(term);
 DECL_PLIST(debug);
 DECL_PLIST(locale);
 DECL_PLIST(dict);
+DECL_PLIST(cont);
+DECL_PLIST(dra);
+
 
 void
 initBuildIns(void)
@@ -441,6 +444,8 @@ initBuildIns(void)
 #endif
   REG_PLIST(debug);
   REG_PLIST(dict);
+  REG_PLIST(cont);
+  REG_PLIST(dra);
 
 #define LOOKUPPROC(name) \
 	{ GD->procedures.name = lookupProcedure(FUNCTOR_ ## name, m); \
@@ -449,6 +454,8 @@ initBuildIns(void)
 
   LOOKUPPROC(dgarbage_collect1);
   LOOKUPPROC(catch3);
+  LOOKUPPROC(reset3);
+  LOOKUPPROC(dmeta_call1);
   LOOKUPPROC(true0);
   LOOKUPPROC(fail0);
   LOOKUPPROC(equals2);
@@ -463,6 +470,7 @@ initBuildIns(void)
   LOOKUPPROC(dinit_goal3);
 #ifdef O_ATTVAR
   LOOKUPPROC(call1);
+//  PROCEDURE_dra_call1 = PL_predicate("dra_call", 1, "system");
 #endif
 #if O_DEBUGGER
   PROCEDURE_event_hook1 =
@@ -473,6 +481,8 @@ initBuildIns(void)
 					/* allow debugging in call/1 */
   clear(PROCEDURE_dcall1->definition, HIDE_CHILDS|TRACE_ME);
   set(PROCEDURE_dcall1->definition, P_DYNAMIC|P_LOCKED);
+
+  /* PL_meta_predicate(PL_predicate("dra_call",         1, "system"), ":");*/
 
   PL_meta_predicate(PL_predicate("assert",           1, "system"), ":");
   PL_meta_predicate(PL_predicate("asserta",          1, "system"), ":");

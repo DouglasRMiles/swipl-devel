@@ -111,8 +111,7 @@ code into functions.
 #ifdef O_ATTVAR
 #define CHECK_WAKEUP \
 	if ( unlikely(LD->alerted & ALERT_WAKEUP) ) \
-	{ LD->alerted &= ~ALERT_WAKEUP; \
-	  if ( *valTermRef(LD->attvar.head) ) \
+	{ if ( *valTermRef(LD->attvar.head) ) \
 	    goto wakeup; \
 	}
 #else
@@ -1607,6 +1606,8 @@ The task of I_CALL is to  save  necessary  information  in  the  current
 frame,  fill  the next frame and initialise the machine registers.  Then
 execution can continue at `next_instruction'
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+/* BEGIN_SHAREDVARS */
+Module module;
 
 VMI(I_CALL, VIF_BREAK, 1, (CA1_PROC))
 { Procedure proc = (Procedure) *PC++;
@@ -1625,6 +1626,65 @@ true:
 - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 normal_call:
+
+  CHECK_METATERM(ARGP);
+
+#ifdef O_DRA_TABLING
+
+  if ( true(DEF,P_DRA_CALL_META) )
+  {
+    DEBUG(MSG_DRA,{Sdprintf("DRA I_CALL in_dra= ~d",LD->dra_base.in_dra);});
+
+    if ( LD->dra_base.in_dra<2 )
+    {
+
+      LD->dra_base.in_dra++;
+
+      { Word a;
+
+        if ( !hasGlobalSpace(2) )
+        {
+          int rc;
+
+          SAVE_REGISTERS(qid);
+          rc = ensureGlobalSpace(2, ALLOW_GC);
+          LOAD_REGISTERS(qid);
+          if ( rc != TRUE )
+          {
+            raiseStackOverflow(rc);
+            THROW_EXCEPTION;
+          }
+        }
+        NFR = lTop;
+        a = argFrameP(NFR, 0);      /* get the goal */
+        deRef(a);
+        Module module0 = NULL;
+        if ( !(a = stripModule(a, &module0 PASS_LD)) ) THROW_EXCEPTION;
+
+        *ARGP++ = consPtr(a, TAG_COMPOUND|STG_GLOBAL);
+        NFR = lTop;
+        // DEF = PROCEDURE_dra_call1->definition;
+        setNextFrameFlags(NFR, FR);
+
+        {
+          NFR = lTop;
+          a = argFrameP(NFR, 0);  /* get the goal */
+          if ( !(a = stripModule(a, &module0 PASS_LD)) ) THROW_EXCEPTION;
+
+          DEBUG(MSG_DRA,{ term_t gg = pushWordAsTermRef(a);
+               LocalFrame ot = lTop;
+               lTop += 100;
+               DEBUG(MSG_DRA,{Sdprintf("DRA I_CALL ");});
+               pl_writeln(gg);
+               popTermRef();
+               lTop = ot;
+               });
+        }
+      }
+    }
+  }
+
+#endif
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Initialise those slots of the frame that are common to Prolog predicates
@@ -1654,6 +1714,7 @@ possible to be able to call-back to Prolog.
       THROW_EXCEPTION;
     }
   }
+
 
 depart_continue:
 retry_continue:
@@ -1916,7 +1977,11 @@ VMI(I_EXIT, VIF_BREAK, 0, ())
   { leave = true(FR, FR_WATCHED) ? FR : NULL;
     FR->clause = NULL;			/* leaveDefinition() destroys clause */
     leaveDefinition(DEF);		/* dynamic pred only */
-    lTop = FR;
+    if ( false(FR, FR_KEEPLTOP) )
+    { lTop = FR;
+    } else
+    { DEBUG(MSG_CONTINUE, Sdprintf("Keeping lTop for %s\n", predicateName(DEF)));
+    }
     DEBUG(3, Sdprintf("Deterministic exit of %s, lTop = #%ld\n",
 		      predicateName(FR->predicate), loffset(lTop)));
   } else
@@ -1972,9 +2037,8 @@ VMI(I_EXITFACT, 0, 0, ())
   exit_checking_wakeup:
 #ifdef O_ATTVAR
     if ( LD->alerted & ALERT_WAKEUP )
-    { LD->alerted &= ~ALERT_WAKEUP;
+    { if ( *valTermRef(LD->attvar.head) )
 
-      if ( *valTermRef(LD->attvar.head) )
       { PC = SUPERVISOR(exit);
 	goto wakeup;
       }
@@ -3503,10 +3567,17 @@ VMI(A_FIRSTVAR_IS, VIF_BREAK, 1, (CA1_FVAR)) /* A is B */
 #ifdef O_PROF_PENTIUM
 #define PROF_FOREIGN \
 	{ END_PROF(); \
+      CHECK_FMETATERM(h0) \
+	  START_PROF(DEF->prof_index, DEF->prof_name); \
+	}
+#define PROF_FOREIGN0 \
+    { END_PROF(); \
 	  START_PROF(DEF->prof_index, DEF->prof_name); \
 	}
 #else
-#define PROF_FOREIGN (void)0
+
+#define PROF_FOREIGN CHECK_FMETATERM(h0)
+#define PROF_FOREIGN0 (void)0
 #endif
 
 BEGIN_SHAREDVARS
@@ -3570,7 +3641,7 @@ a1, a2, ... calling conventions.
 VMI(I_FCALLDET0, 0, 1, (CA1_FOREIGN))
 { Func f = (Func)*PC++;
 
-  PROF_FOREIGN;
+  PROF_FOREIGN0;
   rc = (*f)();
   VMI_GOTO(I_FEXITDET);
 }
@@ -3640,6 +3711,7 @@ VMI(I_FCALLDET7, 0, 1, (CA1_FOREIGN))
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, h0+2, h0+3, h0+4, h0+5, h0+6);
   VMI_GOTO(I_FEXITDET);
 }
@@ -3767,7 +3839,7 @@ VMI(I_FCALLNDETVA, 0, 1, (CA1_FOREIGN))
 VMI(I_FCALLNDET0, 0, 1, (CA1_FOREIGN))
 { Func f = (Func)*PC++;
 
-  PROF_FOREIGN;
+  PROF_FOREIGN0;
   rc = (*f)(&context);
   VMI_GOTO(I_FEXITNDET);
 }
@@ -3786,6 +3858,7 @@ VMI(I_FCALLNDET2, 0, 1, (CA1_FOREIGN))
 { Func f = (Func)*PC++;
   term_t h0 = argFrameP(FR, 0) - (Word)lBase;
 
+  PROF_FOREIGN;
   rc = (*f)(h0, h0+1, &context);
   VMI_GOTO(I_FEXITNDET);
 }
@@ -4150,7 +4223,7 @@ again:
     exceptionUnwindGC(outofstack);
     LOAD_REGISTERS(qid);
     SAVE_REGISTERS(qid);
-    rc = exception_hook(FR, catchfr_ref PASS_LD);
+    rc = exception_hook(qid, consTermRef(FR), catchfr_ref PASS_LD);
     LOAD_REGISTERS(qid);
 
     if ( rc && fid )
@@ -4172,7 +4245,7 @@ again:
   if ( !catchfr_ref &&
        !PL_same_term(exception_term, exception_printed) &&
        false(QueryFromQid(qid), PL_Q_CATCH_EXCEPTION) )
-  { int rc;
+  { term_t rc;
 
     SAVE_REGISTERS(qid);
     rc = isCaughtInOuterQuery(qid, exception_term PASS_LD);
@@ -4406,7 +4479,7 @@ again:
 		 *******************************/
 
 BEGIN_SHAREDVARS
-  Module module;
+  /*Module module;*/
   functor_t functor;
   int arity;
   Word args;
@@ -4519,10 +4592,49 @@ VMI(I_USERCALL0, VIF_BREAK, 0, ())
 	{ term_t g = pushWordAsTermRef(a);
 	  LocalFrame ot = lTop;
 	  lTop += 100;
+      Sdprintf("I_USERCALL0: ");
 	  pl_writeln(g);
 	  popTermRef();
 	  lTop = ot;
 	});
+
+#ifdef O_DRA_TABLING
+  if ( true(DEF,P_DRA_CALL_META) )
+  {
+    DEBUG(MSG_DRA,{Sdprintf("DRA I_USERCALL0: in_dra= ~d ",LD->dra_base.in_dra);});
+
+    if ( LD->dra_base.in_dra<2 )
+    {
+      LD->dra_base.in_dra++;
+
+      functor_t dra_functor =  FUNCTOR_dra_call1;
+
+      FunctorDef draFunctorDef = DEF->dra_interp;
+
+      if ( draFunctorDef!=NULL ) dra_functor = draFunctorDef->functor;
+
+      *ARGP++ = linkVal(a);
+      NFR = lTop;
+      DEF = resolveProcedure(dra_functor, module)->definition;
+      setNextFrameFlags(NFR, FR);
+
+      DEBUG(MSG_DRA,
+         { Sdprintf("DRA I_USERCALL0: ");
+           a = argFrameP(NFR, 0);    /* get the goal */
+           deRef(a);
+           if ( !(a = stripModule(a, &module PASS_LD)) ) THROW_EXCEPTION;
+           term_t gg = pushWordAsTermRef(a);
+           LocalFrame ot = lTop;
+           lTop += 100;
+           pl_writeln(gg);
+           popTermRef();
+           lTop = ot;
+           });
+
+    }
+ }
+#endif  
+
   DEBUG(CHK_SECURE, checkStacks(NULL));
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -4561,6 +4673,9 @@ atom is referenced by the goal-term anyway.
     if ( false(fd, CONTROL_F) && fd->name != ATOM_call )
     { args    = argTermP(goal, 0);
       arity   = (int)fd->arity;
+    } else if ( true(FR, FR_INRESET) )
+    { DEF = GD->procedures.dmeta_call1->definition;
+      goto mcall_cont;
     } else
     { Clause cl;
       int rc;
@@ -4685,6 +4800,21 @@ VMI(I_USERCALLN, VIF_BREAK, 1, (CA1_INTEGER))
   }
 
 i_usercall_common:
+
+/* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+If a P_DRA_CALL
+frame.
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
+
+  if (true(DEF,P_DRA_CALL_META)) 
+  {
+   /*
+    ARGP = argFrameP(NFR, 0);
+
+    for(; arity-- > 0; ARGP++, args++)
+      *ARGP = linkVal(args);
+      */
+  }
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 Now scan the argument vector of the goal and fill the arguments  of  the
 frame.
@@ -4742,8 +4872,11 @@ mcall_cont:
 #endif
   }
 
+
+
   if ( true(DEF, P_TRANSPARENT) )
     setContextModule(NFR, module);
+
 
   goto normal_call;
 }

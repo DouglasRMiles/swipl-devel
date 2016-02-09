@@ -55,6 +55,8 @@ resetProlog(int clear_stacks)
     LD->shift_status.blocked = 0;
     LD->in_arithmetic        = 0;
     LD->in_print_message     = 0;
+    LD->slow_unify     = SLOW_UNIFY_DEFAULT;
+    
   }
 
 #ifdef O_LIMIT_DEPTH
@@ -248,16 +250,12 @@ Execute Goal as once/1 while blocking signals.
 static
 PRED_IMPL("$sig_atomic", 1, sig_atomic, PL_FA_TRANSPARENT)
 { PRED_LD
-  term_t ex;
   int rval;
 
   startCritical;
-  rval = callProlog(NULL, A1, PL_Q_CATCH_EXCEPTION, &ex);
+  rval = callProlog(NULL, A1, PL_Q_PASS_EXCEPTION, NULL);
   if ( !endCritical )
     fail;				/* aborted */
-
-  if ( !rval && ex )
-    return PL_raise_exception(ex);
 
   return rval;
 }
